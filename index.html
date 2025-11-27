@@ -6,7 +6,15 @@
     <title>Suplay - Music Player</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4361ee">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
     <style>
+        /* Your existing CSS remains intact */
         * {
             margin: 0;
             padding: 0;
@@ -270,7 +278,7 @@
 
         .progress-fill {
             height: 100%;
-            width: 30%;
+            width: 0%;
             background: linear-gradient(90deg, var(--primary), var(--secondary));
             border-radius: 3px;
             position: relative;
@@ -560,6 +568,67 @@
             opacity: 1;
         }
 
+        /* Upload Section */
+        .upload-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: var(--surface);
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: var(--card-shadow);
+        }
+
+        .upload-content h2 {
+            margin-bottom: 12px;
+            color: var(--text-primary);
+            font-size: 18px;
+        }
+
+        .upload-content p {
+            margin-bottom: 20px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .upload-btn {
+            padding: 12px 24px;
+            border-radius: 30px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: var(--primary);
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .upload-btn:hover {
+            background: var(--secondary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(76, 201, 240, 0.3);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* Loading Indicator */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
         /* Mobile Responsiveness */
         @media (min-width: 768px) {
             .container {
@@ -741,18 +810,19 @@
             </div>
         </div>
 
-        <div class="permission-section" id="permission-section">
-            <div class="permission-content">
-                <h2>Access Your Music</h2>
-                <p>Grant Suplay access to your device's audio files to discover and play your music</p>
-                <button class="permission-btn" id="grant-permission">
-                    <i class="fas fa-music"></i> Grant Access
+        <div class="upload-section" id="upload-section">
+            <div class="upload-content">
+                <h2>Upload Your Music</h2>
+                <p>Add your own music files to the player</p>
+                <input type="file" id="file-input" class="file-input" multiple accept="audio/*">
+                <button class="upload-btn" id="upload-btn">
+                    <i class="fas fa-upload"></i> Upload Music
                 </button>
             </div>
         </div>
 
         <footer>
-            <p>© 2023 Suplay Music Player | Created with <i class="fas fa-heart" style="color: var(--danger);"></i></p>
+            <p>© 2023 Suplay Music Player | All music provided is royalty-free or user-uploaded. | Created with <i class="fas fa-heart" style="color: var(--danger);"></i></p>
         </footer>
     </div>
 
@@ -761,6 +831,19 @@
     </div>
 
     <script>
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch(registrationError => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             // DOM Elements
             const audio = new Audio();
@@ -779,8 +862,9 @@
             const vinylRecord = document.querySelector('.vinyl-record');
             const tabs = document.querySelectorAll('.tab');
             const notification = document.getElementById('notification');
-            const permissionSection = document.getElementById('permission-section');
-            const grantPermissionBtn = document.getElementById('grant-permission');
+            const uploadSection = document.getElementById('upload-section');
+            const uploadBtn = document.getElementById('upload-btn');
+            const fileInput = document.getElementById('file-input');
             const themeToggle = document.getElementById('theme-toggle');
             const themeIcon = document.getElementById('theme-icon');
 
@@ -790,9 +874,9 @@
             let isShuffle = false;
             let isRepeat = false;
             let favorites = JSON.parse(localStorage.getItem('favorites')) || [];
-            let audioPermission = localStorage.getItem('audioPermission') || false;
             let isDarkMode = localStorage.getItem('darkMode') === 'true';
             let songs = [];
+            let uploadedSongs = JSON.parse(localStorage.getItem('uploadedSongs')) || [];
 
             // Initialize the app
             function init() {
@@ -805,16 +889,9 @@
                     themeIcon.classList.add('fa-sun');
                 }
                 
-                // Check if we have permission to access audio
-                if (audioPermission) {
-                    permissionSection.style.display = 'none';
-                    loadDeviceSongs();
-                } else {
-                    permissionSection.style.display = 'block';
-                }
-                
-                // Load sample songs
+                // Load sample songs and uploaded songs
                 loadSampleSongs();
+                loadUploadedSongs();
                 renderSongs();
                 
                 // Event listeners
@@ -826,8 +903,11 @@
                 volumeSlider.addEventListener('input', setVolume);
                 audio.addEventListener('timeupdate', updateProgress);
                 audio.addEventListener('ended', handleSongEnd);
+                audio.addEventListener('loadedmetadata', updateDuration);
+                audio.addEventListener('canplaythrough', enablePlayback);
                 progressBar.addEventListener('click', seek);
-                grantPermissionBtn.addEventListener('click', requestAudioPermission);
+                uploadBtn.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', handleFileUpload);
                 themeToggle.addEventListener('click', toggleTheme);
                 
                 // Add click events to tabs
@@ -841,9 +921,12 @@
 
                 // Load favorites from localStorage
                 updateFavorites();
+                
+                // Set initial volume
+                setVolume();
             }
 
-            // Load sample songs
+            // Load sample songs with royalty-free music
             function loadSampleSongs() {
                 const sampleSongs = [
                     {
@@ -884,85 +967,22 @@
                 songs = [...sampleSongs];
             }
 
-            // Request audio permission
-            function requestAudioPermission() {
-                // In a real app, this would use the File System Access API
-                // For this example, we'll simulate permission granted
-                audioPermission = true;
-                localStorage.setItem('audioPermission', true);
-                permissionSection.style.display = 'none';
-                showNotification('Audio access granted! Loading your music...');
-                
-                // Simulate loading device songs after a delay
-                setTimeout(() => {
-                    loadDeviceSongs();
-                }, 1500);
-            }
-
-            // Load device songs (simulated)
-            function loadDeviceSongs() {
-                const deviceSongs = [
-                    {
-                        id: 100,
-                        title: "My Favorite Song",
-                        artist: "Unknown Artist",
-                        duration: "3:15",
+            // Load uploaded songs from localStorage
+            function loadUploadedSongs() {
+                uploadedSongs.forEach(song => {
+                    songs.push({
+                        id: song.id,
+                        title: song.title,
+                        artist: song.artist,
+                        duration: song.duration,
                         cover: "",
-                        url: "#",
-                        lyrics: "This is one of my favorite songs from my personal collection",
+                        url: song.url,
+                        lyrics: "User uploaded content",
                         isFavorite: false,
-                        source: "device"
-                    },
-                    {
-                        id: 101,
-                        title: "Road Trip Mix",
-                        artist: "Various Artists",
-                        duration: "4:50",
-                        cover: "",
-                        url: "#",
-                        lyrics: "The perfect soundtrack for a long drive",
-                        isFavorite: false,
-                        source: "device"
-                    },
-                    {
-                        id: 102,
-                        title: "Chill Vibes",
-                        artist: "Local Band",
-                        duration: "3:30",
-                        cover: "",
-                        url: "#",
-                        lyrics: "Relaxing tunes for a lazy afternoon",
-                        isFavorite: false,
-                        source: "device"
-                    },
-                    {
-                        id: 103,
-                        title: "Workout Motivation",
-                        artist: "Energy Radio",
-                        duration: "3:45",
-                        cover: "",
-                        url: "#",
-                        lyrics: "Pump up the energy with this high-tempo track",
-                        isFavorite: false,
-                        source: "device"
-                    },
-                    {
-                        id: 104,
-                        title: "Study Focus",
-                        artist: "Concentration Sounds",
-                        duration: "5:20",
-                        cover: "",
-                        url: "#",
-                        lyrics: "Instrumental music to help you focus and study",
-                        isFavorite: false,
-                        source: "device"
-                    }
-                ];
-                
-                // Add device songs to the beginning of the songs array
-                songs = [...deviceSongs, ...songs];
-                renderSongs();
-                showNotification('Your music has been loaded!');
+                        source: "uploaded",
+                        blobUrl: song.blobUrl
+                    });
+                });
             }
 
             // Toggle theme
@@ -983,6 +1003,82 @@
                 }
             }
 
+            // Handle file upload
+            function handleFileUpload(e) {
+                const files = e.target.files;
+                if (!files || files.length === 0) return;
+                
+                showNotification(`Uploading ${files.length} file(s)...`);
+                
+                Array.from(files).forEach(file => {
+                    // Security check - only allow audio files
+                    if (!file.type.startsWith('audio/')) {
+                        showNotification(`Skipped ${file.name}: Not an audio file`);
+                        return;
+                    }
+                    
+                    // Size limit check (50MB)
+                    if (file.size > 50 * 1024 * 1024) {
+                        showNotification(`Skipped ${file.name}: File too large (max 50MB)`);
+                        return;
+                    }
+                    
+                    // Create a blob URL for the file
+                    const blobUrl = URL.createObjectURL(file);
+                    
+                    // Extract filename without extension for title
+                    const fileName = file.name.replace(/\.[^/.]+$/, "");
+                    
+                    // Create audio element to get duration
+                    const audioTemp = new Audio();
+                    audioTemp.src = blobUrl;
+                    
+                    audioTemp.addEventListener('loadedmetadata', () => {
+                        const duration = formatTime(audioTemp.duration);
+                        
+                        // Create song object
+                        const song = {
+                            id: Date.now() + Math.random(),
+                            title: fileName,
+                            artist: "You",
+                            duration: duration,
+                            cover: "",
+                            url: blobUrl,
+                            lyrics: "User uploaded content",
+                            isFavorite: false,
+                            source: "uploaded",
+                            blobUrl: blobUrl,
+                            file: file
+                        };
+                        
+                        // Add to songs array
+                        songs.push(song);
+                        
+                        // Save to localStorage
+                        uploadedSongs.push({
+                            id: song.id,
+                            title: song.title,
+                            artist: song.artist,
+                            duration: song.duration,
+                            url: song.url,
+                            blobUrl: song.blobUrl
+                        });
+                        localStorage.setItem('uploadedSongs', JSON.stringify(uploadedSongs));
+                        
+                        // Re-render songs
+                        renderSongs();
+                        showNotification(`Added "${fileName}" to your library`);
+                    });
+                    
+                    audioTemp.addEventListener('error', () => {
+                        showNotification(`Error loading ${file.name}`);
+                    });
+                });
+                
+                // Reset file input
+                fileInput.value = '';
+            }
+
             // Render songs to the list
             function renderSongs() {
                 songListEl.innerHTML = '';
@@ -999,7 +1095,7 @@
                         <img src="${song.cover || ''}" alt="${song.title}">
                         <div class="song-details">
                             <h3>${song.title}</h3>
-                            <p>${song.artist} ${song.source === 'device' ? '• Your Device' : ''}</p>
+                            <p>${song.artist} ${song.source === 'uploaded' ? '• Your Upload' : ''}</p>
                         </div>
                         <div class="song-duration">${song.duration}</div>
                         <div class="song-actions">
@@ -1008,6 +1104,9 @@
                             </div>
                             <div class="action-btn favorite-btn ${song.isFavorite ? 'active' : ''}" data-id="${song.id}">
                                 <i class="fas fa-heart"></i>
+                            </div>
+                            <div class="action-btn download-btn" data-index="${index}">
+                                <i class="fas fa-download"></i>
                             </div>
                         </div>
                     `;
@@ -1035,6 +1134,15 @@
                     });
                 });
                 
+                // Add event listeners to download buttons
+                document.querySelectorAll('.download-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const index = parseInt(btn.getAttribute('data-index'));
+                        downloadSong(index);
+                    });
+                });
+                
                 // Add event listeners to song items
                 document.querySelectorAll('.song-item').forEach((item, index) => {
                     item.addEventListener('click', () => {
@@ -1049,11 +1157,8 @@
             function loadSong(index) {
                 const song = songs[index];
                 
-                // In a real app, we would set audio.src to the actual song URL
-                // For demo purposes, we'll just simulate it
-                if (song.url && song.url !== "#") {
-                    audio.src = song.url;
-                }
+                // Set audio source
+                audio.src = song.url;
                 
                 songInfoEl.querySelector('h2').textContent = song.title;
                 songInfoEl.querySelector('p').textContent = song.artist;
@@ -1066,25 +1171,44 @@
                         item.classList.remove('active');
                     }
                 });
+                
+                // Show loading state
+                playPauseBtn.innerHTML = '<div class="loading"></div>';
+            }
+
+            // Enable playback when audio is ready
+            function enablePlayback() {
+                playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+            }
+
+            // Update duration display
+            function updateDuration() {
+                totalTimeEl.textContent = formatTime(audio.duration);
             }
 
             // Play song
             function playSong() {
-                isPlaying = true;
+                // Mobile browsers require user interaction for audio playback
+                const playPromise = audio.play();
                 
-                // For demo purposes, we'll simulate playing
-                // In a real app: audio.play();
-                playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
-                vinylRecord.classList.add('playing');
-                
-                showNotification(`Now playing: ${songs[currentSongIndex].title}`);
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        isPlaying = true;
+                        playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+                        vinylRecord.classList.add('playing');
+                        showNotification(`Now playing: ${songs[currentSongIndex].title}`);
+                    }).catch(error => {
+                        console.log("Playback failed:", error);
+                        showNotification("Click the play button to start playback");
+                        playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+                    });
+                }
             }
 
             // Pause song
             function pauseSong() {
+                audio.pause();
                 isPlaying = false;
-                
-                // In a real app: audio.pause();
                 playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
                 vinylRecord.classList.remove('playing');
             }
@@ -1100,14 +1224,22 @@
 
             // Play next song
             function playNextSong() {
-                currentSongIndex = (currentSongIndex + 1) % songs.length;
+                if (isShuffle) {
+                    currentSongIndex = Math.floor(Math.random() * songs.length);
+                } else {
+                    currentSongIndex = (currentSongIndex + 1) % songs.length;
+                }
                 loadSong(currentSongIndex);
                 playSong();
             }
 
             // Play previous song
             function playPrevSong() {
-                currentSongIndex = (currentSongIndex - 1 + songs.length) % songs.length;
+                if (isShuffle) {
+                    currentSongIndex = Math.floor(Math.random() * songs.length);
+                } else {
+                    currentSongIndex = (currentSongIndex - 1 + songs.length) % songs.length;
+                }
                 loadSong(currentSongIndex);
                 playSong();
             }
@@ -1137,18 +1269,19 @@
                 const progressPercent = (currentTime / duration) * 100;
                 progressFill.style.width = `${progressPercent}%`;
                 
-                // Format time
-                const formatTime = (time) => {
-                    if (isNaN(time)) return "0:00";
-                    const minutes = Math.floor(time / 60);
-                    const seconds = Math.floor(time % 60);
-                    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-                };
-                
                 currentTimeEl.textContent = formatTime(currentTime);
-                if (duration) {
+                
+                if (duration && !isNaN(duration)) {
                     totalTimeEl.textContent = formatTime(duration);
                 }
+            }
+
+            // Format time
+            function formatTime(time) {
+                if (isNaN(time)) return "0:00";
+                const minutes = Math.floor(time / 60);
+                const seconds = Math.floor(time % 60);
+                return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
             }
 
             // Seek functionality
@@ -1156,14 +1289,17 @@
                 const width = this.clientWidth;
                 const clickX = e.offsetX;
                 const duration = audio.duration;
-                audio.currentTime = (clickX / width) * duration;
+                
+                if (duration && !isNaN(duration)) {
+                    audio.currentTime = (clickX / width) * duration;
+                }
             }
 
             // Handle song end
             function handleSongEnd() {
                 if (isRepeat) {
                     audio.currentTime = 0;
-                    audio.play();
+                    playSong();
                 } else {
                     playNextSong();
                 }
@@ -1183,7 +1319,7 @@
                     });
                 } else if (tab === 'library') {
                     songItems.forEach((item, index) => {
-                        if (songs[index].source === 'device') {
+                        if (songs[index].source === 'uploaded') {
                             item.style.display = 'flex';
                         } else {
                             item.style.display = 'none';
@@ -1216,6 +1352,35 @@
                 
                 // Save to localStorage
                 localStorage.setItem('favorites', JSON.stringify(favorites));
+            }
+
+            // Download song
+            function downloadSong(index) {
+                const song = songs[index];
+                
+                if (song.source === 'uploaded' && song.file) {
+                    // For uploaded files, create download link
+                    const url = URL.createObjectURL(song.file);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${song.title}.mp3`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showNotification(`Downloading ${song.title}`);
+                } else if (song.url && song.url.startsWith('http')) {
+                    // For sample songs, use the direct URL
+                    const a = document.createElement('a');
+                    a.href = song.url;
+                    a.download = `${song.title}.mp3`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    showNotification(`Downloading ${song.title}`);
+                } else {
+                    showNotification('Download not available for this song');
+                }
             }
 
             // Update favorites from localStorage
